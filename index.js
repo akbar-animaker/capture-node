@@ -1,32 +1,22 @@
 'use strict';
 const os = require('os');
+const fs = require('fs');
 const util = require('util');
 const path = require('path');
 const execa = require('execa');
-const tempy = require('tempy');
+const { exec, spawn } = require('child_process');
 const macosVersion = require('macos-version');
 const fileUrl = require('file-url');
 const electronUtil = require('electron-util/node');
+const ffmpeg = require('ffmpeg-static')
 
 const debuglog = util.debuglog('aperture');
 
 // Workaround for https://github.com/electron/electron/issues/9459
 const BIN = path.join(electronUtil.fixPathForAsarUnpack(__dirname), 'anim-capture');
 
-const supportsHevcHardwareEncoding = (() => {
-  if (!macosVersion.isGreaterThanOrEqualTo('10.13')) {
-    return false;
-  }
-
-  // Get the Intel Core generation, the `4` in `Intel(R) Core(TM) i7-4850HQ CPU @ 2.30GHz`
-  // More info: https://www.intel.com/content/www/us/en/processors/processor-numbers.html
-  const result = /Intel.*Core.*i(?:7|5)-(\d)/.exec(os.cpus()[0].model);
-
-  // Intel Core generation 6 or higher supports HEVC hardware encoding
-  return result && Number(result[1]) >= 6;
-})();
-
 class Aperture {
+
   constructor() {
     macosVersion.assertGreaterThanOrEqualTo('10.12');
   }
@@ -37,173 +27,88 @@ class Aperture {
     showCursor = true,
     highlightClicks = false,
     screenId = 0,
-    audioDeviceId = undefined,
-    videoCodec = undefined
+    audioDeviceId = undefined
   } = {}) {
     return new Promise((resolve, reject) => {
+
       if (this.recorder !== undefined) {
         reject(new Error('Call `.stopRecording()` first'));
         return;
       }
 
-      this.tmpPath = tempy.file({extension: 'mp4'});
       this.tmpPath = "./Files/"
 
-      if (highlightClicks === true) {
-        showCursor = true;
-      }
-
-      if (typeof cropArea === 'object') {
-        if (typeof cropArea.x !== 'number' ||
-            typeof cropArea.y !== 'number' ||
-            typeof cropArea.width !== 'number' ||
-            typeof cropArea.height !== 'number') {
-          reject(new Error('Invalid `cropArea` option object'));
-          return;
-        }
-      }
-
       const recorderOpts = {
-        destination: fileUrl(this.tmpPath),
+        outputPath: fileUrl(this.tmpPath),
         framesPerSecond: fps,
         showCursor,
         highlightClicks,
         screenId,
-        audioDeviceId
+        audioDeviceId,
+        cropArea
       };
-
-      if (cropArea) {
-        recorderOpts.cropRect = [
-          [cropArea.x, cropArea.y],
-          [cropArea.width, cropArea.height]
-        ];
-      }
-
-      if (videoCodec) {
-        const codecMap = new Map([
-          ['h264', 'avc1'],
-          ['hevc', 'hvc1'],
-          ['proRes422', 'apcn'],
-          ['proRes4444', 'ap4h']
-        ]);
-
-        if (!supportsHevcHardwareEncoding) {
-          codecMap.delete('hevc');
-        }
-
-        if (!codecMap.has(videoCodec)) {
-          throw new Error(`Unsupported video codec specified: ${videoCodec}`);
-        }
-
-        recorderOpts.videoCodec = codecMap.get(videoCodec);
-      }
 
       this.recorder = execa(BIN, [JSON.stringify(recorderOpts)]);
 
-      // const timeout = setTimeout(() => {
-      //   // `.stopRecording()` was called already
-      //   if (this.recorder === undefined) {
-      //     return;
-      //   }
-
-      //   const err = new Error('Could not start recording within 5 seconds');
-      //   err.code = 'RECORDER_TIMEOUT';
-      //   this.recorder.kill();
-      //   delete this.recorder;
-      //   reject(err);
-      // }, 5000);
-
       this.recorder.catch(error => {
-        // clearTimeout(timeout);
         delete this.recorder;
         reject(error);
       });
-
       this.recorder.stdout.setEncoding('utf8');
       this.recorder.stdout.on('data', data => {
         debuglog(data);
-
+        console.log(data);
         if (data.trim() === 'R') {
-          // `R` is printed by Swift when the recording **actually** starts
-          // clearTimeout(timeout);
           resolve(this.tmpPath);
         }
-        console.log(data.trim()) 
-
+        else if (data.indexOf('URL') > -1) {
+          const paths = data.split('\n').join('').split('/')
+          const fileName = +paths[paths.length - 1].split('.mp4')[0];
+          let command = `ffmpeg -y -i ./Files/${fileName}.mp4 -c copy -copyts -muxdelay 0 -muxpreload 0 ./Movies/${fileName}.ts`;
+          exec(command, (mediaError, stdout) => {
+            fs.unlink(`./Files/${fileName}.mp4`, (fileError) => {
+              if (fileError) {
+                console.log(`File Not Removed`)
+              }
+            });
+          });
+        }
       });
       resolve(this.tmpPath);
-
     });
   }
+
   async sendEvent(name, parse) {
-    const {stdout} = await execa(
+    const { stdout } = await execa(
       BIN, [name]
     );
-
     if (parse) {
       return parse(stdout.trim());
     }
   }
-  async start() {
-    return this.sendEvent('start');
-  }
-  async stop() {
+
+  async stopRecording() {
     return this.sendEvent('stop');
   }
-  async pause() {
+
+  async pauseRecording() {
     return this.sendEvent('pause');
   }
-  async resume() {
+
+  async resumeRecording() {
     return this.sendEvent('resume');
   }
-  async stopRecording() {
-    if (this.recorder === undefined) {
-      throw new Error('Call `.startRecording()` first');
+
+  async cancelRecording() {
+    return this.sendEvent('cancel');
+  }
+
+  async muteRecording(isMute) {
+    if (isMute) {
+      return this.sendEvent('mute');
     }
-
-    this.recorder.kill();
-    await this.recorder;
-    delete this.recorder;
-
-    return this.tmpPath;
+    return this.sendEvent('unmute');
   }
 }
 
 module.exports = () => new Aperture();
-
-module.exports.screens = async () => {
-  const stderr = await execa.stderr(BIN, ['list-screens']);
-
-  try {
-    return JSON.parse(stderr);
-  } catch (_) {
-    return stderr;
-  }
-};
-
-module.exports.audioDevices = async () => {
-  const stderr = await execa.stderr(BIN, ['list-audio-devices']);
-
-  try {
-    return JSON.parse(stderr);
-  } catch (_) {
-    return stderr;
-  }
-};
-
-Object.defineProperty(module.exports, 'videoCodecs', {
-  get() {
-    const codecs = new Map([
-      ['h264', 'H264'],
-      ['hevc', 'HEVC'],
-      ['proRes422', 'Apple ProRes 422'],
-      ['proRes4444', 'Apple ProRes 4444']
-    ]);
-
-    if (!supportsHevcHardwareEncoding) {
-      codecs.delete('hevc');
-    }
-
-    return codecs;
-  }
-});

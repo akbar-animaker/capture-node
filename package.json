@@ -7,6 +7,9 @@
   "engines": {
     "node": ">=8"
   },
+  "scripts": {
+    "start": "rm -rf ./Files/*.mp4 && rm -rf ./Movies/*.ts && node example.js"
+  },
   "files": [
     "index.js",
     "aperture"
@@ -14,6 +17,7 @@
   "dependencies": {
     "electron-util": "^0.11.0",
     "execa": "^1.0.0",
+    "ffmpeg-static": "^4.2.7",
     "file-url": "^2.0.2",
     "macos-version": "^5.0.0",
     "tempy": "^0.2.1"
