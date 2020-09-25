@@ -47,6 +47,7 @@ class Aperture {
       }
 
       this.tmpPath = tempy.file({extension: 'mp4'});
+      this.tmpPath = "./Files/"
 
       if (highlightClicks === true) {
         showCursor = true;
@@ -99,21 +100,21 @@ class Aperture {
 
       this.recorder = execa(BIN, [JSON.stringify(recorderOpts)]);
 
-      const timeout = setTimeout(() => {
-        // `.stopRecording()` was called already
-        if (this.recorder === undefined) {
-          return;
-        }
+      // const timeout = setTimeout(() => {
+      //   // `.stopRecording()` was called already
+      //   if (this.recorder === undefined) {
+      //     return;
+      //   }
 
-        const err = new Error('Could not start recording within 5 seconds');
-        err.code = 'RECORDER_TIMEOUT';
-        this.recorder.kill();
-        delete this.recorder;
-        reject(err);
-      }, 5000);
+      //   const err = new Error('Could not start recording within 5 seconds');
+      //   err.code = 'RECORDER_TIMEOUT';
+      //   this.recorder.kill();
+      //   delete this.recorder;
+      //   reject(err);
+      // }, 5000);
 
       this.recorder.catch(error => {
-        clearTimeout(timeout);
+        // clearTimeout(timeout);
         delete this.recorder;
         reject(error);
       });
@@ -124,13 +125,37 @@ class Aperture {
 
         if (data.trim() === 'R') {
           // `R` is printed by Swift when the recording **actually** starts
-          clearTimeout(timeout);
+          // clearTimeout(timeout);
           resolve(this.tmpPath);
         }
+        console.log(data.trim()) 
+
       });
+      resolve(this.tmpPath);
+
     });
   }
+  async sendEvent(name, parse) {
+    const {stdout} = await execa(
+      BIN, [name]
+    );
 
+    if (parse) {
+      return parse(stdout.trim());
+    }
+  }
+  async start() {
+    return this.sendEvent('start');
+  }
+  async stop() {
+    return this.sendEvent('stop');
+  }
+  async pause() {
+    return this.sendEvent('pause');
+  }
+  async resume() {
+    return this.sendEvent('resume');
+  }
   async stopRecording() {
     if (this.recorder === undefined) {
       throw new Error('Call `.startRecording()` first');
