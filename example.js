@@ -3,7 +3,10 @@ const delay = require('delay');
 const aperture = require('.');
 
 async function main() {
-  const recorder = aperture();
+  const recorder = aperture({
+    outputPath: './Movies',
+    recordId: 'sample'
+  });
   recorder.startRecording();
   console.log('Recording started');
   await delay(7000);

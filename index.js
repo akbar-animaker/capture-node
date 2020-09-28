@@ -8,7 +8,7 @@ const { exec, spawn } = require('child_process');
 const macosVersion = require('macos-version');
 const fileUrl = require('file-url');
 const electronUtil = require('electron-util/node');
-const ffmpeg = require('ffmpeg-static')
+const ffmpeg = require('ffmpeg-static');
 
 const debuglog = util.debuglog('aperture');
 
@@ -17,35 +17,59 @@ const BIN = path.join(electronUtil.fixPathForAsarUnpack(__dirname), 'anim-captur
 
 class Aperture {
 
-  constructor() {
+  constructor(props) {
     macosVersion.assertGreaterThanOrEqualTo('10.12');
+    const {
+      fps = 30,
+      cropRect = undefined,
+      height = null,
+      width = null,
+      showCursor = true,
+      highlightClicks = false,
+      screenId = null,
+      cameraId = null,
+      audioDeviceId = null,
+      chunkDuration = 5,
+      noiseCancellation = true,
+      recordAudioInMono = false,
+      recordId = null,
+      outputPath = null
+    } = props;
+    this.fps = fps;
+    this.cropRect = cropRect;
+    this.height = height;
+    this.width = width;
+    this.showCursor = showCursor;
+    this.highlightClicks = highlightClicks;
+    this.screenId = screenId;
+    this.cameraId = cameraId;
+    this.audioDeviceId = audioDeviceId;
+    this.chunkDuration = chunkDuration;
+    this.noiseCancellation = noiseCancellation;
+    this.recordAudioInMono = recordAudioInMono;
+    this.recordId = recordId;
+    this.outputPath = outputPath;
+    this.tmpPath = os.tmpdir();
   }
 
-  startRecording({
-    fps = 30,
-    cropArea = undefined,
-    showCursor = true,
-    highlightClicks = false,
-    screenId = 0,
-    audioDeviceId = undefined
-  } = {}) {
+  startRecording = () => {
     return new Promise((resolve, reject) => {
-
       if (this.recorder !== undefined) {
         reject(new Error('Call `.stopRecording()` first'));
         return;
-      }
-
-      this.tmpPath = "./Files/"
-
+      }      
       const recorderOpts = {
         outputPath: fileUrl(this.tmpPath),
-        framesPerSecond: fps,
-        showCursor,
-        highlightClicks,
-        screenId,
-        audioDeviceId,
-        cropArea
+        fps: this.fps,
+        showCursor: this.showCursor,
+        highlightClicks: this.highlightClicks,
+        displayId: this.screenId,
+        audioDevice: this.audioDeviceId,
+        videoDevice: this.cameraId,
+        width: this.width,
+        height: this.height,
+        cropRect: this.cropRect,
+        duration: this.chunkDuration
       };
 
       this.recorder = execa(BIN, [JSON.stringify(recorderOpts)]);
@@ -56,17 +80,20 @@ class Aperture {
       });
       this.recorder.stdout.setEncoding('utf8');
       this.recorder.stdout.on('data', data => {
-        debuglog(data);
+        let response = {};
         console.log(data);
+        try {
+          response = JSON.parse(data);
+        } catch (err) {
+          response = {};
+        };
         if (data.trim() === 'R') {
           resolve(this.tmpPath);
-        }
-        else if (data.indexOf('URL') > -1) {
-          const paths = data.split('\n').join('').split('/')
-          const fileName = +paths[paths.length - 1].split('.mp4')[0];
-          let command = `ffmpeg -y -i ./Files/${fileName}.mp4 -c copy -copyts -muxdelay 0 -muxpreload 0 ./Movies/${fileName}.ts`;
+        } else if (response.status === "PROGRESS") {
+          const chunkNumber = +response.chunkNumber;
+          let command = `ffmpeg -y -i ${response.location} -c copy -copyts -muxdelay 0 -muxpreload 0 ${this.outputPath}/${this.recordId}-${chunkNumber}.ts`;
           exec(command, (mediaError, stdout) => {
-            fs.unlink(`./Files/${fileName}.mp4`, (fileError) => {
+            fs.unlink(response.location, (fileError) => {
               if (fileError) {
                 console.log(`File Not Removed`)
               }
@@ -111,4 +138,4 @@ class Aperture {
   }
 }
 
-module.exports = () => new Aperture();
+module.exports = (props) => new Aperture(props);

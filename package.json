@@ -8,7 +8,7 @@
     "node": ">=8"
   },
   "scripts": {
-    "start": "rm -rf ./Files/*.mp4 && rm -rf ./Movies/*.ts && node example.js"
+    "start": "rm -rf ./Files/* && rm -rf ./Movies/* && node example.js"
   },
   "files": [
     "index.js",
